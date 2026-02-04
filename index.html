@@ -32,6 +32,81 @@
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
         }
 
+        /* 扫描线效果 */
+        #scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.15),
+                rgba(0, 0, 0, 0.15) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            z-index: 100;
+            animation: scanlineScroll 10s linear infinite;
+        }
+
+        @keyframes scanlineScroll {
+            0% { background-position: 0 0; }
+            100% { background-position: 0 100%; }
+        }
+
+        /* 噪点效果 */
+        #noise {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            z-index: 101;
+            animation: noise 0.5s steps(5) infinite;
+        }
+
+        @keyframes noise {
+            0% { transform: translate(0, 0); }
+            10% { transform: translate(-5%, -5%); }
+            20% { transform: translate(-10%, 5%); }
+            30% { transform: translate(5%, -10%); }
+            40% { transform: translate(-5%, 15%); }
+            50% { transform: translate(-10%, 5%); }
+            60% { transform: translate(15%, 0); }
+            70% { transform: translate(0, 10%); }
+            80% { transform: translate(-15%, 0); }
+            90% { transform: translate(10%, 5%); }
+            100% { transform: translate(5%, 0); }
+        }
+
+        /* 故障效果 */
+        @keyframes glitch {
+            0% { transform: translate(0); filter: hue-rotate(0deg); }
+            20% { transform: translate(-5px, 3px); filter: hue-rotate(90deg); }
+            40% { transform: translate(-3px, -5px); filter: hue-rotate(180deg); }
+            60% { transform: translate(5px, 5px); filter: hue-rotate(270deg); }
+            80% { transform: translate(-5px, -3px); filter: hue-rotate(360deg); }
+            100% { transform: translate(0); filter: hue-rotate(0deg); }
+        }
+
+        .glitch-active {
+            animation: glitch 0.2s linear;
+        }
+
+        /* 死亡白闪 */
+        @keyframes whiteFlash {
+            0%, 100% { background: transparent; }
+            50% { background: rgba(255, 255, 255, 0.8); }
+        }
+
+        .white-flash {
+            animation: whiteFlash 0.3s ease-out;
+        }
+
         #ui {
             position: absolute;
             top: 20px;
@@ -156,6 +231,8 @@
 <body>
     <div id="gameContainer">
         <canvas id="gameCanvas"></canvas>
+        <div id="scanlines"></div>
+        <div id="noise"></div>
         <div id="ui">
             <div id="score">SCORE: 0</div>
             <div id="multiplier">×1.0</div>
@@ -193,13 +270,20 @@
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
 
-        // 合成器波风格BGM
+        // 合成器波风格BGM - 与倍率挂钩
         function startBGM() {
             if (bgmPlaying) return;
             bgmPlaying = true;
 
             const bassFreq = 55;
-            const arpeggio = [bassFreq, bassFreq * 1.5, bassFreq * 2, bassFreq * 1.5];
+            
+            function getMultiplierSpeed() {
+                return Math.max(100, 150 - multiplier * 30);
+            }
+
+            function getArpggioBaseFreq() {
+                return bassFreq * (1 + multiplier * 0.1);
+            }
 
             function playArpggio() {
                 if (!bgmPlaying) return;
@@ -209,13 +293,17 @@
                 const filter = audioCtx.createBiquadFilter();
 
                 osc.type = 'sawtooth';
-                osc.frequency.value = arpeggio[Math.floor(Math.random() * arpeggio.length)];
-                
-                filter.type = 'lowpass';
-                filter.frequency.value = 400;
-                filter.Q.value = 5;
+                const baseFreq = getArpggioBaseFreq();
+                const arpeggioNotes = [1, 1.5, 2, 1.5];
+                osc.frequency.value = baseFreq * arpeggioNotes[Math.floor(Math.random() * arpeggioNotes.length)];
 
-                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                // 动态滤波器 - 倍率高时更亮
+                filter.type = 'lowpass';
+                filter.frequency.value = 400 + multiplier * 200;
+                filter.Q.value = 5 + multiplier;
+
+                // 音量随倍率增加
+                gain.gain.setValueAtTime(0.1 + multiplier * 0.02, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
 
                 osc.connect(filter);
@@ -225,7 +313,7 @@
                 osc.start();
                 osc.stop(audioCtx.currentTime + 0.2);
 
-                setTimeout(playArpggio, 150);
+                setTimeout(playArpggio, getMultiplierSpeed());
             }
 
             function playBass() {
@@ -235,7 +323,7 @@
                 const gain = audioCtx.createGain();
 
                 osc.type = 'square';
-                osc.frequency.value = 55;
+                osc.frequency.value = bassFreq;
 
                 gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
@@ -371,34 +459,55 @@
             }
         }
 
+        // 粒子系统 - 对象池优化
+        const particlePool = [];
+        const maxParticles = 100;
+        let activeParticles = [];
+
+        function getParticle() {
+            if (particlePool.length > 0) {
+                return particlePool.pop();
+            }
+            return {
+                x: 0, y: 0, vx: 0, vy: 0, life: 0, color: '#fff', size: 0
+            };
+        }
+
+        function returnParticle(p) {
+            if (particlePool.length < maxParticles) {
+                particlePool.push(p);
+            }
+        }
+
         // 创建粒子爆炸
         function createExplosion(x, y, color) {
             for (let i = 0; i < 15; i++) {
+                const p = getParticle();
                 const angle = (Math.PI * 2 / 15) * i;
                 const speed = 2 + Math.random() * 3;
-                particles.push({
-                    x: x * gridSize + gridSize / 2,
-                    y: y * gridSize + gridSize / 2,
-                    vx: Math.cos(angle) * speed,
-                    vy: Math.sin(angle) * speed,
-                    life: 1,
-                    color: color,
-                    size: 3 + Math.random() * 4
-                });
+                p.x = x * gridSize + gridSize / 2;
+                p.y = y * gridSize + gridSize / 2;
+                p.vx = Math.cos(angle) * speed;
+                p.vy = Math.sin(angle) * speed;
+                p.life = 1;
+                p.color = color;
+                p.size = 3 + Math.random() * 4;
+                activeParticles.push(p);
             }
         }
 
         // 更新粒子
         function updateParticles(deltaTime) {
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i];
+            for (let i = activeParticles.length - 1; i >= 0; i--) {
+                const p = activeParticles[i];
                 p.x += p.vx;
                 p.y += p.vy;
                 p.life -= deltaTime * 2;
                 p.size *= 0.95;
 
                 if (p.life <= 0) {
-                    particles.splice(i, 1);
+                    returnParticle(p);
+                    activeParticles.splice(i, 1);
                 }
             }
         }
@@ -428,7 +537,9 @@
         function drawSnake(time) {
             snake.forEach((segment, index) => {
                 const progress = index / snake.length;
-                const hue = 180 + progress * 120; // 蓝到紫
+                // 流光效果：颜色随时间偏移
+                const hueOffset = (time / 20) % 360;
+                const hue = (180 + progress * 120 + hueOffset) % 360;
                 const glowIntensity = overdrive ? 30 : 15;
 
                 ctx.save();
@@ -508,7 +619,7 @@
 
         // 绘制粒子
         function drawParticles() {
-            particles.forEach(p => {
+            activeParticles.forEach(p => {
                 ctx.save();
                 ctx.globalAlpha = p.life;
                 ctx.shadowColor = p.color;
@@ -638,10 +749,25 @@
             gameRunning = false;
             playSound('crash');
             screenShake = 30;
-            stopBGM();
+
+            // 死亡故障特效
+            const gameContainer = document.getElementById('gameContainer');
+            const canvasEl = document.getElementById('gameCanvas');
             
-            document.getElementById('finalScore').textContent = score;
-            document.getElementById('gameOverScreen').classList.remove('hidden');
+            // 白闪效果
+            canvasEl.classList.add('white-flash');
+            
+            // 故障效果
+            canvasEl.classList.add('glitch-active');
+            
+            // Hit Stop: 延迟显示结算界面
+            setTimeout(() => {
+                canvasEl.classList.remove('white-flash', 'glitch-active');
+                document.getElementById('finalScore').textContent = score;
+                document.getElementById('gameOverScreen').classList.remove('hidden');
+            }, 200);
+
+            stopBGM();
         }
 
         // 开始游戏
@@ -655,6 +781,8 @@
             overdriveCount = 0;
             brakeEnergy = 0;
             particles = [];
+            activeParticles = [];
+            particlePool.length = 0;
             
             initSnake();
             spawnFood();
@@ -672,7 +800,8 @@
             const deltaTime = currentTime - lastTime;
             lastTime = currentTime;
 
-            ctx.fillStyle = '#0a0a0f';
+            // 残影拖尾效果 - 用半透明黑色覆盖
+            ctx.fillStyle = 'rgba(10, 10, 15, 0.25)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             breathPhase += deltaTime / 1000;
@@ -752,6 +881,46 @@
                     break;
             }
         });
+
+        // 触摸控制（移动端）
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        canvas.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            e.preventDefault();
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (!gameRunning) return;
+
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            
+            const dx = touchEndX - touchStartX;
+            const dy = touchEndY - touchStartY;
+            
+            const minSwipe = 30;
+            
+            if (Math.abs(dx) > Math.abs(dy)) {
+                // 水平滑动
+                if (dx > minSwipe && direction.x !== -1) {
+                    nextDirection = { x: 1, y: 0 };
+                } else if (dx < -minSwipe && direction.x !== 1) {
+                    nextDirection = { x: -1, y: 0 };
+                }
+            } else {
+                // 垂直滑动
+                if (dy > minSwipe && direction.y !== -1) {
+                    nextDirection = { x: 0, y: 1 };
+                } else if (dy < -minSwipe && direction.y !== 1) {
+                    nextDirection = { x: 0, y: -1 };
+                }
+            }
+            
+            e.preventDefault();
+        }, { passive: false });
 
         // 启动游戏循环
         requestAnimationFrame(gameLoop);
