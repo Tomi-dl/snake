@@ -27,7 +27,9 @@
         }
 
         #gameCanvas {
-            filter: contrast(1.2) brightness(1.1);
+            filter: contrast(1.2) brightness(1.1) 
+                    drop-shadow(2px 0px 0px rgba(255,0,255,0.2))
+                    drop-shadow(-2px 0px 0px rgba(0,255,255,0.2));
             border: 2px solid rgba(0, 255, 255, 0.3);
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
         }
@@ -270,7 +272,10 @@
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
 
-        // 合成器波风格BGM - 与倍率挂钩
+        // 合成器波风格BGM - 与倍率挂钩 + audioCtx.currentTime精确调度
+        let bgmNextArpggioTime = 0;
+        let bgmNextBassTime = 0;
+
         function startBGM() {
             if (bgmPlaying) return;
             bgmPlaying = true;
@@ -285,60 +290,78 @@
                 return bassFreq * (1 + multiplier * 0.1);
             }
 
-            function playArpggio() {
+            // 使用 audioCtx.currentTime 进行精确调度
+            function scheduleArpggio() {
                 if (!bgmPlaying) return;
 
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
+                const now = audioCtx.currentTime;
+                
+                if (now >= bgmNextArpggioTime) {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    const filter = audioCtx.createBiquadFilter();
 
-                osc.type = 'sawtooth';
-                const baseFreq = getArpggioBaseFreq();
-                const arpeggioNotes = [1, 1.5, 2, 1.5];
-                osc.frequency.value = baseFreq * arpeggioNotes[Math.floor(Math.random() * arpeggioNotes.length)];
+                    osc.type = 'sawtooth';
+                    const baseFreq = getArpggioBaseFreq();
+                    const arpeggioNotes = [1, 1.5, 2, 1.5];
+                    osc.frequency.value = baseFreq * arpeggioNotes[Math.floor(Math.random() * arpeggioNotes.length)];
 
-                // 动态滤波器 - 倍率高时更亮
-                filter.type = 'lowpass';
-                filter.frequency.value = 400 + multiplier * 200;
-                filter.Q.value = 5 + multiplier;
+                    // 动态滤波器 - 倍率高时更亮
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 400 + multiplier * 200;
+                    filter.Q.value = 5 + multiplier;
 
-                // 音量随倍率增加
-                gain.gain.setValueAtTime(0.1 + multiplier * 0.02, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                    // 音量随倍率增加
+                    gain.gain.setValueAtTime(0.1 + multiplier * 0.02, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
 
-                osc.connect(filter);
-                filter.connect(gain);
-                gain.connect(audioCtx.destination);
+                    osc.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(audioCtx.destination);
 
-                osc.start();
-                osc.stop(audioCtx.currentTime + 0.2);
+                    osc.start(now);
+                    osc.stop(now + 0.2);
 
-                setTimeout(playArpggio, getMultiplierSpeed());
+                    bgmNextArpggioTime = now + getMultiplierSpeed() / 1000;
+                }
+
+                requestAnimationFrame(scheduleArpggio);
             }
 
-            function playBass() {
+            function scheduleBass() {
                 if (!bgmPlaying) return;
 
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
+                const now = audioCtx.currentTime;
+                
+                if (now >= bgmNextBassTime) {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
 
-                osc.type = 'square';
-                osc.frequency.value = bassFreq;
+                    osc.type = 'square';
+                    osc.frequency.value = bassFreq;
 
-                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
 
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
 
-                osc.start();
-                osc.stop(audioCtx.currentTime + 0.5);
+                    osc.start(now);
+                    osc.stop(now + 0.5);
 
-                setTimeout(playBass, 500);
+                    bgmNextBassTime = now + 0.5;
+                }
+
+                requestAnimationFrame(scheduleBass);
             }
 
-            playArpggio();
-            playBass();
+            // 初始化调度时间
+            const now = audioCtx.currentTime;
+            bgmNextArpggioTime = now;
+            bgmNextBassTime = now + 0.25;
+
+            scheduleArpggio();
+            scheduleBass();
         }
 
         function stopBGM() {
@@ -429,6 +452,23 @@
         // 呼吸灯效果
         let breathPhase = 0;
 
+        // 视差背景 - 代码流
+        const codeDrops = [];
+        for (let i = 0; i < 25; i++) {
+            codeDrops.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                speed: 0.3 + Math.random() * 0.8,
+                text: Math.random() > 0.5 ? '1' : '0'
+            });
+        }
+
+        // 防火墙障碍物
+        let firewalls = [];
+
+        // 连击弹出文字
+        let comboPopups = [];
+
         // 初始化蛇
         function initSnake() {
             snake = [];
@@ -512,6 +552,54 @@
             }
         }
 
+        // 绘制视差背景代码流
+        function drawBackgroundCode(ctx) {
+            ctx.save();
+            ctx.font = "10px monospace";
+            ctx.fillStyle = "rgba(0, 255, 255, 0.03)";
+            
+            codeDrops.forEach(drop => {
+                ctx.fillText(drop.text, drop.x, drop.y);
+                drop.y += drop.speed;
+                if (drop.y > canvas.height) {
+                    drop.y = -10;
+                    drop.x = Math.random() * canvas.width;
+                }
+            });
+            
+            ctx.restore();
+        }
+
+        // 绘制蛇头灯光投影（锥形光束）
+        function drawSnakeHeadLight(ctx) {
+            if (snake.length === 0) return;
+
+            const head = snake[0];
+            const cx = head.x * gridSize + gridSize / 2;
+            const cy = head.y * gridSize + gridSize / 2;
+            const angle = Math.atan2(direction.y, direction.x);
+            
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(angle);
+            
+            // 锥形光束渐变
+            const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 100);
+            gradient.addColorStop(0, 'rgba(0, 255, 255, 0.3)');
+            gradient.addColorStop(0.5, 'rgba(0, 255, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(0, 255, 255, 0)');
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(100, -30);
+            ctx.lineTo(100, 30);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
         // 绘制网格背景
         function drawGrid(time) {
             const pulse = 0.5 + Math.sin(time / 1000) * 0.5;
@@ -530,6 +618,58 @@
                 ctx.moveTo(0, y * gridSize);
                 ctx.lineTo(canvas.width, y * gridSize);
                 ctx.stroke();
+            }
+        }
+
+        // 绘制防火墙障碍物
+        function drawFirewalls(time) {
+            firewalls.forEach(fw => {
+                const x = fw.x * gridSize;
+                const y = fw.y * gridSize;
+                
+                // 闪烁效果
+                const flash = 0.5 + Math.sin(time / 50 + fw.x) * 0.5;
+                
+                ctx.save();
+                ctx.shadowColor = '#f00';
+                ctx.shadowBlur = 15 * flash;
+                ctx.fillStyle = `rgba(255, 0, 0, ${0.6 + flash * 0.4})`;
+                
+                // 电网样式
+                ctx.fillRect(x + 1, y + 1, gridSize - 2, gridSize - 2);
+                
+                // 十字交叉线
+                ctx.strokeStyle = '#ff0';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(x + 5, y + 5);
+                ctx.lineTo(x + gridSize - 5, y + gridSize - 5);
+                ctx.moveTo(x + gridSize - 5, y + 5);
+                ctx.lineTo(x + 5, y + gridSize - 5);
+                ctx.stroke();
+                
+                ctx.restore();
+            });
+        }
+
+        // 生成防火墙
+        function spawnFirewall() {
+            if (score < 200 || firewalls.length >= 5) return;
+            
+            // 避免生成在蛇附近
+            const x = Math.floor(Math.random() * tileCount);
+            const y = Math.floor(Math.random() * tileCount);
+            
+            const safeDistance = 5;
+            const tooClose = snake.some(seg => 
+                Math.abs(seg.x - x) < safeDistance && Math.abs(seg.y - y) < safeDistance
+            );
+            
+            if (!tooClose && !food) {
+                // 确保不重叠食物
+                if (x !== food.x || y !== food.y) {
+                    firewalls.push({ x, y, life: 1 });
+                }
             }
         }
 
@@ -649,6 +789,22 @@
                 return true;
             }
 
+            // 撞防火墙
+            const hitFirewall = firewalls.some(fw => fw.x === x && fw.y === y);
+            if (hitFirewall) {
+                if (overdrive) {
+                    // Overdrive模式可以击碎防火墙
+                    firewalls = firewalls.filter(fw => fw.x !== x || fw.y !== y);
+                    score += 50;
+                    createExplosion(x, y, '#ff0');
+                    playSound('overdrive');
+                    screenShake = 10;
+                    return false;
+                } else {
+                    return true;
+                }
+            }
+
             // 撞自己（除非在overdrive模式）
             if (!overdrive) {
                 for (let i = 0; i < snake.length - 1; i++) {
@@ -696,6 +852,11 @@
                 // 能量积累
                 brakeEnergy = Math.min(brakeEnergy + 1, 3);
 
+                // 显示连击文字
+                if (multiplier > 1) {
+                    showComboPopup(head.x * gridSize, head.y * gridSize, `x${multiplier.toFixed(1)}`);
+                }
+
                 // Overdrive计数
                 overdriveCount++;
                 if (overdriveCount >= 5) {
@@ -736,6 +897,38 @@
             
             document.getElementById('overdrive').classList.remove('active');
             document.getElementById('borderGlow').classList.remove('overdrive');
+        }
+
+        // 连击弹出文字
+        function showComboPopup(x, y, text) {
+            comboPopups.push({
+                x: x + gridSize,
+                y: y,
+                text: text,
+                life: 1,
+                vy: -2
+            });
+        }
+
+        // 绘制连击弹出文字
+        function drawComboPopups() {
+            comboPopups.forEach((popup, index) => {
+                ctx.save();
+                ctx.globalAlpha = popup.life;
+                ctx.font = "bold 16px Courier New";
+                ctx.fillStyle = `hsl(${300 * popup.life}, 100%, 50%)`;
+                ctx.shadowColor = '#fff';
+                ctx.shadowBlur = 10 * popup.life;
+                ctx.fillText(popup.text, popup.x, popup.y);
+                ctx.restore();
+
+                popup.y += popup.vy;
+                popup.life -= 0.02;
+
+                if (popup.life <= 0) {
+                    comboPopups.splice(index, 1);
+                }
+            });
         }
 
         // 更新UI
@@ -783,6 +976,8 @@
             particles = [];
             activeParticles = [];
             particlePool.length = 0;
+            firewalls = [];
+            comboPopups = [];
             
             initSnake();
             spawnFood();
@@ -795,9 +990,17 @@
             lastTime = performance.now();
         }
 
-        // 主游戏循环
+        // 主游戏循环 - 适配高刷屏
+        let lastTime = 0;
+        let accumTime = 0;
+        let baseSpeed = 100;
+        let currentSpeed = baseSpeed;
+        const targetFPS = 60; // 目标帧率
+
         function gameLoop(currentTime) {
+            // 计算实际帧率差异，确保不同刷新率下速度一致
             const deltaTime = currentTime - lastTime;
+            const timeScale = deltaTime / (1000 / targetFPS);
             lastTime = currentTime;
 
             // 残影拖尾效果 - 用半透明黑色覆盖
@@ -819,15 +1022,23 @@
             if (accumTime >= currentSpeed && gameRunning) {
                 accumTime = 0;
                 moveSnake();
+                // 随机生成防火墙
+                if (Math.random() < 0.02) {
+                    spawnFirewall();
+                }
             }
 
             // 绘制
             ctx.save();
             applyScreenShake();
             
+            drawBackgroundCode(ctx);
             drawGrid(currentTime);
+            drawFirewalls(currentTime);
             drawFood(currentTime);
+            drawSnakeHeadLight(ctx);
             drawSnake(currentTime);
+            drawComboPopups();
             drawParticles();
             
             ctx.restore();
@@ -868,14 +1079,29 @@
                     e.preventDefault();
                     break;
                 case ' ':
-                    // 刹车功能
-                    if (brakeEnergy > 0) {
+                    // 瞬移（Dash）功能
+                    if (brakeEnergy > 0 && gameRunning) {
                         brakeEnergy--;
-                        currentSpeed = baseSpeed * 3;
-                        setTimeout(() => {
-                            if (!overdrive) currentSpeed = baseSpeed;
-                        }, 200);
+                        
+                        // 瞬移逻辑：向前推进3格
+                        for (let i = 0; i < 3; i++) {
+                            const nextHead = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+                            
+                            if (!checkCollision(nextHead.x, nextHead.y)) {
+                                snake.unshift(nextHead);
+                                snake.pop();
+                                // 留下瞬移痕迹粒子
+                                createExplosion(nextHead.x, nextHead.y, '#0ff');
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        screenShake = 15;
                         playSound('brake');
+                        
+                        // 显示瞬移文字
+                        showComboPopup(snake[0].x * gridSize, snake[0].y * gridSize, "DASH!");
                     }
                     e.preventDefault();
                     break;
